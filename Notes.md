@@ -1,7 +1,16 @@
 # **Go Learning Notes**
+<!-- vscode-markdown-toc -->
+* 1. [0. Basics](#Basics)
+	* 1.1. [**Imports**](#Imports)
 
-## 0. Basics
-### **Imports**
+<!-- vscode-markdown-toc-config
+	numbering=true
+	autoSave=true
+	/vscode-markdown-toc-config -->
+<!-- /vscode-markdown-toc -->
+
+##  1. <a name='Basics'></a>Basics
+###  1.1. <a name='Imports'></a>**Imports**
 ```go
 package main
 
