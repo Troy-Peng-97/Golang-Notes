@@ -564,4 +564,164 @@ Function values mayu be used as function arguments and return values
 
 
 
+## Gin Framework
 
+
+**Highlighted features of Gin**\
+Gin is a fully-featured, high-performance HTTP web framework for the Go ecosystem. It’s becoming more popular every day among Gophers (Go developers) due to the following features.
+
+**Performance**\
+Gin comes with a very fast and lightweight Go HTTP routing library (see the detailed benchmark). It uses a custom version of the lightweight HttpRouter routing library, which uses a fast, Radix tree-based routing algorithm.
+
+### **Returning Data in Different Formats**
+Specifiy different returned field names according to the format
+```go
+type album struct {
+	ID string `json:"id" xml:"Id"`
+	Title string `json:"title" xml:"Title"`
+	Artist string `json:"artist" xml:"Artist"`
+	Price float64 `json:"price" xml:"Price"`
+}
+```
+```xml
+//xml return
+<album><Id>1</Id><Title>Blue Train</Title><Artist>John Coltrane</Artist><Price>56.99</Price></album><album><Id>2</Id><Title>Jeru</Title><Artist>Gerry Mulligan</Artist><Price>17.99</Price></album><album><Id>3</Id><Title>Sarah Vaughan and Clifford Brown</Title><Artist>Sarah Vaughan</Artist><Price>39.99</Price></album>
+```
+```Indented JSON
+//Indented JSON return
+[
+    {
+        "id": "1",
+        "title": "Blue Train",
+        "artist": "John Coltrane",
+        "price": 56.99
+    },
+    {
+        "id": "2",
+        "title": "Jeru",
+        "artist": "Gerry Mulligan",
+        "price": 17.99
+    },
+    {
+        "id": "3",
+        "title": "Sarah Vaughan and Clifford Brown",
+        "artist": "Sarah Vaughan",
+        "price": 39.99
+    }
+]
+```
+
+### **Struct-tag-based Validation Feature**
+```go
+type PrintJob struct {
+    JobId int `json:"jobId" binding:"required,gte=10000"`
+    Pages int `json:"pages" binding:"required,gte=1,lte=100"`
+}
+```
+We need to use the binding struct tag to define our validation rules inside the PrintJob struct. Gin uses go-playground/validator for the internal binding validator implementation. The above validation definition accepts inputs based on the following rules:
+
+- ```JobId: Required, x ≥ 10000```
+- ```Pages: Required, 100 ≥ x ≥ 1```
+
+
+
+### **Extending Gin with Middleware**
+
+Gin’s middleware system lets developers modify HTTP messages and perform common actions without writing repetitive code inside endpoint handlers. When you create a new Gin router instance with the ```gin.Default()``` function, it attaches logging and recovery middleware automatically.
+
+For example, you can enable CORS in microservices with the following code snippet:
+```go
+package main
+import (
+    "github.com/gin-gonic/gin"
+    "github.com/gin-contrib/cors"
+)
+
+func main() {
+    router := gin.Default()
+    router.Use(cors.Default())
+    router.GET("/", func(c *gin.Context) {
+        c.JSON(200, gin.H{"message": "CORS works!"})
+    })
+    router.Run(":5000")
+}
+```
+
+#### **Customize Middleware**
+It’s possible to build your own middleware with Gin’s middleware API, too. For example, the following custom middleware intercepts and prints (logs to the console) the User-Agent header’s value for each HTTP request. (Similar to "@AROUND" in Java Spring AOP)
+```go
+func FindUserAgent() gin.HandlerFunc {
+    return func(c *gin.Context) {
+        log.Println(c.GetHeader("User-Agent"))
+        // Before calling handler
+        c.Next() // continue the request handling 
+        // After calling handler
+    }
+}
+func main() {
+    router := gin.Default()
+    router.Use(FindUserAgent())
+    router.GET("/", func(c *gin.Context) {
+        c.JSON(200, gin.H{"message": "Middleware works!"})
+    })
+    router.Run(":5000")
+}
+```
+
+### **Calling Microservices internally** 
+**Resty** Use ```go-resty``` to call microservices.
+```go
+package main
+import (
+    "math/rand"
+    "time"
+    "log"
+    "github.com/gin-gonic/gin"
+    "github.com/go-resty/resty/v2"
+)
+
+type Invoice struct {
+    InvoiceId int `json:"invoiceId"`
+    CustomerId int `json:"customerId" binding:"required,gte=0"`
+    Price int `json:"price" binding:"required,gte=0"`
+    Description string `json:"description" binding:"required"`
+}
+type PrintJob struct {
+    JobId int `json:"jobId"`
+    InvoiceId int `json:"invoiceId"`
+    Format string `json:"format"`
+}
+func createPrintJob(invoiceId int) {
+    client := resty.New()
+    var p PrintJob
+    // Call PrinterService via RESTful interface
+    _, err := client.R().
+        SetBody(PrintJob{Format: "A4", InvoiceId: invoiceId}).
+        SetResult(&p).
+        Post("http://localhost:5000/print-jobs")
+
+    if err != nil {
+        log.Println("InvoiceGenerator: unable to connect PrinterService")
+        return
+    }
+    log.Printf("InvoiceGenerator: created print job #%v via PrinterService", p.JobId)
+}
+func main() {
+    router := gin.Default()
+    router.POST("/invoices", func(c *gin.Context) {
+        var iv Invoice
+        if err := c.ShouldBindJSON(&iv); err != nil {
+            c.JSON(400, gin.H{"error": "Invalid input!"})
+            return
+        }
+        log.Println("InvoiceGenerator: creating new invoice...")
+        rand.Seed(time.Now().UnixNano())
+        iv.InvoiceId = rand.Intn(1000)
+        log.Printf("InvoiceGenerator: created invoice #%v", iv.InvoiceId)
+
+        createPrintJob(iv.InvoiceId) // Ask PrinterService to create a print job
+        c.JSON(200, iv)
+    })
+    router.Run(":6000")
+}
+```
