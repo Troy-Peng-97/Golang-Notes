@@ -25,6 +25,17 @@
 		* 1.6.7. [**Map**](#Map)
 		* 1.6.8. [**Mutating Maps**](#MutatingMaps)
 		* 1.6.9. [**Function values**](#Functionvalues)
+* 2. [Gin Framework](#GinFramework)
+	* 2.1. [**Returning Data in Different Formats**](#ReturningDatainDifferentFormats)
+	* 2.2. [**Struct-tag-based Validation Feature**](#Struct-tag-basedValidationFeature)
+	* 2.3. [**Extending Gin with Middleware**](#ExtendingGinwithMiddleware)
+		* 2.3.1. [**Customize Middleware**](#CustomizeMiddleware)
+	* 2.4. [**Calling Microservices internally**](#CallingMicroservicesinternally)
+	* 2.5. [**K,V in Gin Context**](#KVinGinContext)
+		* 2.5.1. [GetString()](#GetString)
+* 3. [**Context in Go**](#ContextinGo)
+* 4. [**YAML in GO**](#YAMLinGO)
+	* 4.1. [**Unmarshal**](#Unmarshal)
 
 <!-- vscode-markdown-toc-config
 	numbering=true
@@ -562,9 +573,83 @@ elem, ok := m[key]
 Functions are values too. They can be passed around just like other values
 Function values mayu be used as function arguments and return values
 
+#### **Type Embedding**
+The theory behind embedding is pretty straightforward: by including a type as a nameless parameter within another type, the exported parameters and methods defined on the embedded type are accessible through the embedding type. The compiler decides on this by using a technique called “promotion”: the exported properties and methods of the embedded type are promoted to the embedding type.
+
+```go
+type Ball struct {
+    Radius   int
+    Material string
+}
+
+type Football struct {
+	Ball
+}
+```
+So now you have embedded Ball into Football. Now, if you have a method defined on the embedded type, Ball:
+```go
+func (b Ball) Bounce() {
+    fmt.Printf("Bouncing ball %+v\n", b)
+}
+```
+You can access the method through the embedding type, Football:
+```go 
+fb.Bounce()
+```
+##### Embedding interfaces
+If the embedded type implements a particular interface, then that too is accessible through the embedding type. Here is an interface and a function that accepts the interface as parameter:
+```go
+type Bouncer interface {
+    Bounce()
+}
+func BounceIt(b Bouncer) {
+    b.Bounce()
+}
+```
+Now you can call the method using the embedding type:
+```go
+BounceIt(fb)
+```
+It is also possible to embed interfaces in structs. You can use this to explicitly state that the embedding struct needs to satisfy the embedded interface and at the same time hide it's data.
+```go
+type Football struct {
+	Bouncer
+}
+```
+NOTE: The embedded struct has no access to the embedding struct. Unlike traditional inheritance, it is not possible for the embedded struct (child) to access anything from the embedding struct (parent.) If you duplicate a property, its value is never accessible "downstream". Consider this adjustment to the Football struct and the Bounce method:
+```go
+type Football struct {
+    Ball
+    Radius int
+}
+func (b Ball) Bounce() {
+    fmt.Printf("Radius = %d\n", b.Radius)
+}
+
+fb := Football{Ball{Radius: 5, Material: "leather"}, 7}
+```
+Then these two method calls will both print "Radius = 5"
+```go
+fb.Bounce()
+fb.Ball.Bounce()
+```
 
 
-## Gin Framework
+#### **Receiver**
+```go
+func (h handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+    ...
+}
+
+func (s *GracefulServer) BlockingClose() bool {
+    ...
+}
+```
+This is called the 'receiver'. Function Receiver sets a method on variables that we create. In the first case (h handler) it is a value type, in the second (s *GracefulServer) it is a pointer. The way this works in Go may vary a bit from some other languages. The receiving type, however, works more or less like a class in most object-oriented programming. It is the thing you call the method from, much like if I put some method A inside some class Person then I would need an instance of type Person in order to call A (assuming it's an instance method and not static!).
+
+One gotcha here is that the receiver gets pushed onto the call stack like other arguments so if the receiver is a value type, like in the case of handler then you will be working on a copy of the thing you called the method from meaning something like h.Name = "Evan" would not persist after you return to the calling scope. For this reason, anything that expects to change the state of the receiver needs to use a pointer or return the modified value (gives more of an immutable type paradigm if you're looking for that).
+
+##  2. <a name='GinFramework'></a>Gin Framework
 
 
 **Highlighted features of Gin**\
@@ -573,7 +658,7 @@ Gin is a fully-featured, high-performance HTTP web framework for the Go ecosyste
 **Performance**\
 Gin comes with a very fast and lightweight Go HTTP routing library (see the detailed benchmark). It uses a custom version of the lightweight HttpRouter routing library, which uses a fast, Radix tree-based routing algorithm.
 
-### **Returning Data in Different Formats**
+###  2.1. <a name='ReturningDatainDifferentFormats'></a>**Returning Data in Different Formats**
 Specifiy different returned field names according to the format
 ```go
 type album struct {
@@ -611,7 +696,7 @@ type album struct {
 ]
 ```
 
-### **Struct-tag-based Validation Feature**
+###  2.2. <a name='Struct-tag-basedValidationFeature'></a>**Struct-tag-based Validation Feature**
 ```go
 type PrintJob struct {
     JobId int `json:"jobId" binding:"required,gte=10000"`
@@ -625,7 +710,7 @@ We need to use the binding struct tag to define our validation rules inside the 
 
 
 
-### **Extending Gin with Middleware**
+###  2.3. <a name='ExtendingGinwithMiddleware'></a>**Extending Gin with Middleware**
 
 Gin’s middleware system lets developers modify HTTP messages and perform common actions without writing repetitive code inside endpoint handlers. When you create a new Gin router instance with the ```gin.Default()``` function, it attaches logging and recovery middleware automatically.
 
@@ -647,8 +732,11 @@ func main() {
 }
 ```
 
-#### **Customize Middleware**
+####  2.3.1. <a name='CustomizeMiddleware'></a>**Customize Middleware**
 It’s possible to build your own middleware with Gin’s middleware API, too. For example, the following custom middleware intercepts and prints (logs to the console) the User-Agent header’s value for each HTTP request. (Similar to "@AROUND" in Java Spring AOP)
+
+Logger middleware will write the logs to gin.DefaultWriter even if you set with GIN_MODE=release. By default gin.DefaultWriter = os.Stdout
+
 ```go
 func FindUserAgent() gin.HandlerFunc {
     return func(c *gin.Context) {
@@ -668,7 +756,29 @@ func main() {
 }
 ```
 
-### **Calling Microservices internally** 
+**Use Group() to group apis serve the same aspect together**
+```go
+// router for test
+	test := router.Group("/api/v1/test/")
+	{
+		test.GET("ping", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{
+				"msg":    "pong",
+				"status": 0,
+			})
+		})
+		test.GET("param/:id", handler.Param) 
+		test.GET("param2", handler.Param2)   
+	}
+```
+
+### **Gin Recovery Middleware**
+Recovery Middleware recovers from any panics and writes a 500 if there was one.
+```go
+router.Use(gin.Recovery())
+```
+
+###  2.4. <a name='CallingMicroservicesinternally'></a>**Calling Microservices internally** 
 **Resty** Use ```go-resty``` to call microservices.
 ```go
 package main
@@ -725,3 +835,89 @@ func main() {
     router.Run(":6000")
 }
 ```
+
+###  2.5. <a name='KVinGinContext'></a>**K,V in Gin Context**
+####  2.5.1. <a name='GetString'></a>GetString()
+```go
+return c.GetString(TraceIDKey)
+```
+```go
+// GetString returns the value associated with the key as a string.
+func (c *Context) GetString(key string) (s string) {
+	if val, ok := c.Get(key); ok && val != nil {
+		s, _ = val.(string)
+	}
+	return
+}
+```
+
+### **Log Response Body in Gin**
+
+You need to intercept writing of response and store it somewhere first. Then you can log it. And to do that you need to implement your own Writer intercepting Write() calls.
+
+```go
+type bodyLogWriter struct {
+    gin.ResponseWriter
+    body *bytes.Buffer
+}
+
+func (w bodyLogWriter) Write(b []byte) (int, error) {
+    w.body.Write(b)
+    return w.ResponseWriter.Write(b)
+}
+
+func ginBodyLogMiddleware(c *gin.Context) {
+    blw := &bodyLogWriter{body: bytes.NewBufferString(""), ResponseWriter: c.Writer}
+    c.Writer = blw
+    c.Next()
+    statusCode := c.Writer.Status()
+    if statusCode >= 400 {
+        //ok this is an request with error, let's make a record for it
+        // now print body (or log in your preferred way)
+        fmt.Println("Response body: " + blw.body.String())
+    }
+}
+```
+
+##  3. <a name='ContextinGo'></a>**Context in Go**
+Incoming requests to a server should create a Context, and outgoing calls to servers should accept a Context. The chain of function calls between them just propagate the Context, optionally replacing it with a derived Context created using WithCancel, WithDeadline, WithTimeOut, or WithValue. **When a Context is canceled, all Contexts derived from it are also canceled.** 
+
+The WithCancel, WithDeadline, WithTimeOut functions take a Context (the parent) and returns a derived Context (the child) and a CancelFunc. Calling the CancelFunc cancels the child and its children, removes the parent's reference to the child, and stops any associated timers. Failing to call the CancelFunc leaks the child and its children until the parent is canceled or the timer fires. The govet tool checks that CancelFuncs are used on all control-flow paths.
+
+Programs that use Contexts should follow these rules to keep interfaces consistent across packages and enable static analysis tools to check context propagation:
+
+Do not store Contexts inside a struct type; instead, pass a Context explicitly to each function that needs it. The Context should be the first parameter, typically named ctx:
+```go
+func DoSomething(ctx context.Context, arg Arg) error {
+	// ... use ctx ...
+}
+```
+Do not pass a nil Context, even if a function permits it. Pass context.TODO if you are unsure about which Context to use.
+
+Use context Values only for request-scoped data that transits processes and APIs, not for passing optional parameters to functions.
+
+The same Context may be passed to functions running in different goroutines; **Contexts are safe for simultaneous use by multiple goroutines.**
+
+##  4. <a name='YAMLinGO'></a>**YAML in GO**
+
+###  4.1. <a name='Unmarshal'></a>**Unmarshal**
+```go
+func Unmarshal(in []byte, out interface{}) (err error)
+````
+Unmarshal decodes the first document found within the ```in``` byte slice and assigns decoded values into the ```out``` value.\
+**Maps and pointers (to a struct, string, int, etc) are accepted as out values** If an internal pointer within a struct is not initialized, the yaml package will initialize it if necessary for unmarshalling the provided data. The out parameter mast not be nil.\
+The type of the decoded values should be compatible with the respective values in out. If one or more values cannot be decoded due to a type mismatches, decoding continues partially untiil the end of the YAML content, and a *yaml.TypeError is returned with details for all missed values.
+
+Struct fields are only unmarshalled if they are exported (have an upper case first letter), and are unmarshalled using the field name lowercassed as the default key. Custom keys may be defined via the "yaml" name in the field tag: the content proceding the first comma is used as the key, and the following comma-seperated options are used to tweak the marshalling process (see Marshal).
+Conflicting names result in a runtime error. 
+
+For Example:
+```go
+type T struct {
+	F int `yaml:"a,omitempty"`
+	B int
+}
+var t T
+yaml.Unmarshal([]byte("a: 1\nb: 2"), &t)
+```
+
